@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.26...3.29)
 
 
-add_executable(cmake_starter_template main.cpp)
+add_executable(cmake_starter_template cmake_starter_template.cpp)
 target_include_directories(
     cmake_starter_template
     PRIVATE
