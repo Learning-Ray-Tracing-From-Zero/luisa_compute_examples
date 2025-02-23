@@ -44,9 +44,6 @@ project(
 # it will organize files according to the folder structure in the generated IDE project (such as Visual Studio or Xcode)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-# you may set the LUISA_COMPUTE_ENABLE_XXX options before including LuisaCompute
-add_subdirectory(thirdparty/LuisaCompute)
-# setup the output directories to make the executables under the same binary directory as LuisaCompute
-include(thirdparty/LuisaCompute/scripts/setup_output_dirs.cmake)
+add_subdirectory(thirdparty)
 
 add_subdirectory(src)
