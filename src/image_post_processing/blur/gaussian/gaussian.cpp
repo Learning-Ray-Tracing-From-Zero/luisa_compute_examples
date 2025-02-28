@@ -15,7 +15,7 @@ using namespace luisa::compute;
 
 static constexpr auto PI { 3.14159265358979323846 };
 
-double gaussian(int x, int y, double sigma = 1.5) {
+double gaussian(int x, int y, double sigma = 0.5) {
     double sigma_coefficient = 1.0 / 2.0 * sigma * sigma;
     return (sigma_coefficient / PI) * std::exp(-(x * x + y * y) * sigma_coefficient);
 }
@@ -48,11 +48,11 @@ int main(int argc, char *argv[]) {
     Image<float> blurred_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
 
     // Step 4: Transfer the weight matrix to the device
-    constexpr uint KERNEL_RADIUS = argv[3];
-    constexpr uint KERNEL_SIZE = KERNEL_RADIUS * 2u + 1u; // Gaussian kernel size (e.g., 5x5)
-    constexpr std::array<float, KERNEL_SIZE * KERNEL_SIZE> GAUSSIAN_KERNEL = {};
-    for (uint y { 0uz }, y < KERNEL_SIZE; ++y) {
-        for (uint x { 0uz }; x < KERNEL_SIZE, ++x) {
+    uint KERNEL_RADIUS = static_cast<uint>(std::stoul(argv[3]));
+    uint KERNEL_SIZE = KERNEL_RADIUS * 2u + 1u; // Gaussian kernel size (e.g., 5x5)
+    std::vector<float> GAUSSIAN_KERNEL(KERNEL_SIZE * KERNEL_SIZE, 0.0f);
+    for (uint y { 0uz }; y < KERNEL_SIZE; ++y) {
+        for (uint x { 0uz }; x < KERNEL_SIZE; ++x) {
             GAUSSIAN_KERNEL[x + y * KERNEL_SIZE] = gaussian(x - KERNEL_RADIUS, y - KERNEL_RADIUS);
         }
     }
@@ -60,9 +60,13 @@ int main(int argc, char *argv[]) {
     stream << weight_matrix.copy_from(GAUSSIAN_KERNEL.data()) << synchronize();
 
     // Step 5: Define the Gaussian blur kernel
-    Kernel2D gaussian_blur_kernel = [](ImageFloat input, ImageFloat output, BufferFloat weight_matrix) noexcept {
+    Kernel2D gaussian_blur_kernel = [&](
+        ImageFloat input,
+        ImageFloat output,
+        BufferFloat weight_matrix
+    ) noexcept {
         auto coord = dispatch_id().xy();
-        auto sum = make_float4(0.0f);
+        Float4 sum = make_float4(0.0f);
         $for (y, 0u, KERNEL_SIZE) {
             $for (x, 0u, KERNEL_SIZE) {
                 auto sample_coord = make_uint2(
@@ -74,7 +78,7 @@ int main(int argc, char *argv[]) {
                     make_uint2(0u),
                     make_uint2(dispatch_size().xy()) - 1u
                 );
-                auto weight = weight_matrix_buffer.read(x + y * KERNEL_SIZE);
+                auto weight = weight_matrix.read(x + y * KERNEL_SIZE);
                 sum += input->read(sample_coord) * weight;
             };
         };
