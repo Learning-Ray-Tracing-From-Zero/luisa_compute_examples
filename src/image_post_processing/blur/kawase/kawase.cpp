@@ -47,6 +47,34 @@ int main(int argc, char *argv[]) {
     stream << device_image.copy_from(image_data) << synchronize();
     stbi_image_free(image_data);
 
+    Kernel2D kawase_blur_kernel = [](
+        ImageFloat input,
+        ImageFloat output,
+        UInt blur_radius,
+        UInt kernel_size,
+        BufferFloat weight_matrix
+    ) noexcept {
+        auto coord = dispatch_id().xy();
+        Float4 sum = make_float4(0.0f);
+        $for (y, 0u, kernel_size) {
+            $for (x, 0u, kernel_size) {
+                auto sample_coord = make_uint2(
+                    coord.x - blur_radius + x,
+                    coord.y - blur_radius + y
+                );
+                sample_coord = clamp(
+                    sample_coord,
+                    make_uint2(0u),
+                    make_uint2(dispatch_size().xy()) - 1u
+                );
+                auto weight = weight_matrix.read(x + y * kernel_size);
+                sum += input->read(sample_coord) * weight;
+            };
+        };
+        output->write(coord, sum);
+    };
+    Shader kawase_blur = device.compile(kawase_blur_kernel);
+
     Image<float> blurred_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
     for (int blur_radius { 1uz }; blur_radius < iter_size + 1; ++blur_radius) {
         uint kernel_size = blur_radius * 2u + 1u;
@@ -64,35 +92,9 @@ int main(int argc, char *argv[]) {
         Buffer<float> weight_matrix = device.create_buffer<float>(kawase_weight.size());
         stream << weight_matrix.copy_from(kawase_weight.data()) << synchronize();
 
-        Kernel2D kawase_blur_kernel = [&](
-            ImageFloat input,
-            ImageFloat output,
-            BufferFloat weight_matrix
-        ) noexcept {
-            auto coord = dispatch_id().xy();
-            Float4 sum = make_float4(0.0f);
-            $for (y, 0u, kernel_size) {
-                $for (x, 0u, kernel_size) {
-                    auto sample_coord = make_uint2(
-                        coord.x - blur_radius + x,
-                        coord.y - blur_radius + y
-                    );
-                    sample_coord = clamp(
-                        sample_coord,
-                        make_uint2(0u),
-                        make_uint2(dispatch_size().xy()) - 1u
-                    );
-                    auto weight = weight_matrix.read(x + y * kernel_size);
-                    sum += input->read(sample_coord) * weight;
-                };
-            };
-            output->write(coord, sum);
-        };
-        Shader kawase_blur = device.compile(kawase_blur_kernel);
-
         Image<float> temp_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
         stream << device_image.copy_to(temp_image) << synchronize();
-        stream << kawase_blur(temp_image.view(0), blurred_image.view(0), weight_matrix).dispatch(width, height)
+        stream << kawase_blur(temp_image.view(0), blurred_image.view(0), blur_radius, kernel_size, weight_matrix).dispatch(width, height)
                << synchronize();
         stream << blurred_image.copy_to(device_image) << synchronize();
     }
