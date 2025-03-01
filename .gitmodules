@@ -2,3 +2,6 @@
 	path = thirdparty/LuisaCompute
 	url = https://github.com/LuisaGroup/LuisaCompute.git
 	branch = next
+[submodule "thirdparty/cxxopts"]
+	path = thirdparty/cxxopts
+	url = https://github.com/jarro2783/cxxopts.git
