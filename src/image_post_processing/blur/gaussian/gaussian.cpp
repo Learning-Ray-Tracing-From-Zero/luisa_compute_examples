@@ -15,16 +15,23 @@ using namespace luisa::compute;
 
 static constexpr auto PI { 3.14159265358979323846 };
 
-double gaussian(int x, int y, double sigma = 0.5) {
-    double sigma_coefficient = 1.0 / 2.0 * sigma * sigma;
-    return (sigma_coefficient / PI) * std::exp(-(x * x + y * y) * sigma_coefficient);
+double gaussian(int x, int y, double sigma = 2.0) {
+    double sigma_coefficient = 1.0 / (2.0 * sigma * sigma);
+    return std::exp(-(x * x + y * y) * sigma_coefficient);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <backend> <input_image_path> <blur_kernel_radius>\n";
+    if (argc != 6) {
+        std::cerr << "Usage: "
+                  << argv[0]
+                  << " <backend> <input_image_path> <output_image_path> <blur_radius> <blur_sigma>\n";
         return 1;
     }
+
+    const char* input_image_path = argv[2];
+    const char* output_image_path = argv[3];
+    int blur_radius = std::stoi(argv[4]);
+    double blur_sigma = std::stod(argv[5]);
 
     // Step 1: Create a context and device
     Context context { argv[0] };
@@ -34,9 +41,9 @@ int main(int argc, char *argv[]) {
     int width { 0 };
     int height { 0 };
     int channels { 0 };
-    uint8_t *image_data = stbi_load(argv[2], &width, &height, &channels, 4); // Force 4 channels (RGBA)
+    uint8_t *image_data = stbi_load(input_image_path, &width, &height, &channels, 4); // Force 4 channels (RGBA)
     if (!image_data) {
-        std::cerr << "Failed to load image: " << argv[2] << "\n";
+        std::cerr << "Failed to load image: " << input_image_path << "\n";
         return 1;
     }
 
@@ -44,20 +51,27 @@ int main(int argc, char *argv[]) {
     Stream stream = device.create_stream(StreamTag::COMPUTE);
     Image<float> device_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
     stream << device_image.copy_from(image_data) << synchronize();
+    stbi_image_free(image_data);
 
     Image<float> blurred_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
 
     // Step 4: Transfer the weight matrix to the device
-    uint KERNEL_RADIUS = static_cast<uint>(std::stoul(argv[3]));
-    uint KERNEL_SIZE = KERNEL_RADIUS * 2u + 1u; // Gaussian kernel size (e.g., 5x5)
-    std::vector<float> GAUSSIAN_KERNEL(KERNEL_SIZE * KERNEL_SIZE, 0.0f);
-    for (uint y { 0uz }; y < KERNEL_SIZE; ++y) {
-        for (uint x { 0uz }; x < KERNEL_SIZE; ++x) {
-            GAUSSIAN_KERNEL[x + y * KERNEL_SIZE] = gaussian(x - KERNEL_RADIUS, y - KERNEL_RADIUS);
+    uint kernel_size = blur_radius * 2u + 1u;
+    std::vector<float> gaussian_kernel(kernel_size * kernel_size, 0.0f);
+    auto kernel_sum { 0.0f };
+    for (uint y { 0uz }; y < kernel_size; ++y) {
+        for (uint x { 0uz }; x < kernel_size; ++x) {
+            gaussian_kernel[x + y * kernel_size] = gaussian(
+                x - blur_radius,
+                y - blur_radius,
+                blur_sigma
+            );
+            kernel_sum += gaussian_kernel[x + y * kernel_size];
         }
     }
-    Buffer<float> weight_matrix = device.create_buffer<float>(GAUSSIAN_KERNEL.size());
-    stream << weight_matrix.copy_from(GAUSSIAN_KERNEL.data()) << synchronize();
+    for (auto& weight : gaussian_kernel) { weight /= kernel_sum; }
+    Buffer<float> weight_matrix = device.create_buffer<float>(gaussian_kernel.size());
+    stream << weight_matrix.copy_from(gaussian_kernel.data()) << synchronize();
 
     // Step 5: Define the Gaussian blur kernel
     Kernel2D gaussian_blur_kernel = [&](
@@ -67,18 +81,18 @@ int main(int argc, char *argv[]) {
     ) noexcept {
         auto coord = dispatch_id().xy();
         Float4 sum = make_float4(0.0f);
-        $for (y, 0u, KERNEL_SIZE) {
-            $for (x, 0u, KERNEL_SIZE) {
+        $for (y, 0u, kernel_size) {
+            $for (x, 0u, kernel_size) {
                 auto sample_coord = make_uint2(
-                    coord.x - KERNEL_RADIUS + x,
-                    coord.y - KERNEL_RADIUS + y
+                    coord.x - blur_radius + x,
+                    coord.y - blur_radius + y
                 );
                 sample_coord = clamp( // processing image boundaries
                     sample_coord,
                     make_uint2(0u),
                     make_uint2(dispatch_size().xy()) - 1u
                 );
-                auto weight = weight_matrix.read(x + y * KERNEL_SIZE);
+                auto weight = weight_matrix.read(x + y * kernel_size);
                 sum += input->read(sample_coord) * weight;
             };
         };
@@ -95,8 +109,7 @@ int main(int argc, char *argv[]) {
     stream << blurred_image.copy_to(download_image.data()) << synchronize();
 
     // Save the blurred image
-    stbi_write_png("blurred_output.png", width, height, 4, download_image.data(), 0);
-    stbi_image_free(image_data); // clean up
+    stbi_write_png(output_image_path, width, height, 4, download_image.data(), 0);
 
     return 0;
 }
