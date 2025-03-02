@@ -38,19 +38,18 @@ int main(int argc, char *argv[]) {
     int width { 0 };
     int height { 0 };
     int channels { 0 };
-    uint8_t *image_data = stbi_load(input_image_path, &width, &height, &channels, 4); // Force 4 channels (RGBA)
+    std::uint8_t *image_data = stbi_load(input_image_path, &width, &height, &channels, 4); // Force 4 channels (RGBA)
     if (!image_data) {
-        std::cerr << "Failed to load image: " << input_image_path << "\n";
+        std::cerr << "Failed to load image: " << input_image_path << '\n';
         return 1;
     }
 
     // Step 3: Create images on the device
     Stream stream = device.create_stream(StreamTag::COMPUTE);
     Image<float> device_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
+    Image<float> blurred_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
     stream << device_image.copy_from(image_data) << synchronize();
     stbi_image_free(image_data);
-
-    Image<float> blurred_image = device.create_image<float>(PixelStorage::BYTE4, width, height, 0u);
 
     // Step 4: Transfer the weight matrix to the device
     uint kernel_size = blur_radius * 2u + 1u;
@@ -73,16 +72,20 @@ int main(int argc, char *argv[]) {
         Float4 sum = make_float4(0.0f);
         $for (y, 0u, kernel_size) {
             $for (x, 0u, kernel_size) {
-                auto sample_coord = make_uint2(
-                    coord.x - blur_radius + x,
-                    coord.y - blur_radius + y
-                );
-                sample_coord = clamp( // processing image boundaries
-                    sample_coord,
-                    make_uint2(0u),
-                    make_uint2(dispatch_size().xy()) - 1u
-                );
                 auto weight = weight_matrix.read(x + y * kernel_size);
+                UInt2 sample_coord = make_uint2(0u, 0u);
+                Float2 temp_coord = make_float2(
+                    Float(coord.x) + Float(x) - Float(blur_radius),
+                    Float(coord.y) + Float(y) - Float(blur_radius)
+                );
+                // processing image boundaries(BORDER_REFLECT_101)
+                sample_coord = make_uint2(UInt(abs(temp_coord.x)), UInt(abs(temp_coord.y)));
+                $if (temp_coord.x >= Float(dispatch_size().x)) {
+                    sample_coord.x = UInt(abs(Float(2u * coord.x) - temp_coord.x));
+                };
+                $if (temp_coord.y >= Float(dispatch_size().y)) {
+                    sample_coord.y = UInt(abs(Float(2u * coord.y) - temp_coord.y));
+                };
                 sum += input->read(sample_coord) * weight;
             };
         };
