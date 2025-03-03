@@ -12,7 +12,7 @@
 
 using namespace luisa;
 using namespace luisa::compute;
-using namespace std::literals::string_literals
+using namespace std::literals::string_literals;
 
 
 struct Onb {
@@ -30,15 +30,19 @@ LUISA_STRUCT(Onb, tangent, binormal, normal) {
 
 int main(int argc, char *argv[]) {
     if (argc <= 1) {
-        LUISA_INFO("Usage: {} <backend>. <backend>: cuda, dx, cpu, metal", argv[0]);
+        LUISA_INFO(
+            "Usage: {} <backend> <spp>\nbackend: cuda, dx, cpu, metal\nspp: preferably an integer multiple of 64",
+            argv[0]
+        );
         exit(1);
     }
 
     log_level_verbose();
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
+    int samples_per_pixel = std::stoi(argv[2]);
 
-    // load the Cornell Box scene
+    // load the cornell box scene
     tinyobj::ObjReaderConfig obj_reader_config;
     obj_reader_config.triangulate = true;
     obj_reader_config.triangulation_method = "simple";
@@ -72,7 +76,8 @@ int main(int argc, char *argv[]) {
     BindlessArray heap = device.create_bindless_array();
     Stream stream = device.create_stream(StreamTag::GRAPHICS);
     Buffer<float3> vertex_buffer = device.create_buffer<float3>(vertices.size());
-    stream << vertex_buffer.copy_from(vertices.data());
+    stream << vertex_buffer.copy_from(vertices.data())
+           << synchronize();
     luisa::vector<Mesh> meshes;
     luisa::vector<Buffer<Triangle>> triangle_buffers;
     for (auto &&shape : obj_reader.GetShapes()) {
@@ -86,11 +91,14 @@ int main(int argc, char *argv[]) {
         luisa::vector<uint> indices;
         indices.reserve(t.size());
         for (tinyobj::index_t i : t) { indices.emplace_back(i.vertex_index); }
-        Buffer<Triangle> &triangle_buffer = triangle_buffers.emplace_back(device.create_buffer<Triangle>(triangle_count));
+        Buffer<Triangle> &triangle_buffer = triangle_buffers.emplace_back(
+            device.create_buffer<Triangle>(triangle_count)
+        );
         Mesh &mesh = meshes.emplace_back(device.create_mesh(vertex_buffer, triangle_buffer));
         heap.emplace_on_update(index, triangle_buffer);
         stream << triangle_buffer.copy_from(indices.data())
-               << mesh.build();
+               << mesh.build()
+               << synchronize();
     }
 
     Accel accel = device.create_accel({});
@@ -187,7 +195,13 @@ int main(int argc, char *argv[]) {
         device.backend_name() == "metal" || device.backend_name() == "cpu" || device.backend_name() == "fallback"
         ? 1u
         : 64u;
-    Kernel2D raytracing_kernel = [&](ImageFloat image, ImageUInt seed_image, AccelVar accel, UInt2 resolution) noexcept {
+    // auto spp_per_dispatch = 1u;
+    Kernel2D raytracing_kernel = [&](
+        ImageFloat image,
+        ImageUInt seed_image,
+        AccelVar accel,
+        UInt2 resolution
+    ) noexcept {
         set_name("raytracing_kernel");
         set_block_size(16u, 16u, 1u);
         UInt2 coord = dispatch_id().xy();
@@ -225,8 +239,7 @@ int main(int argc, char *argv[]) {
                 $if (hit.inst == static_cast<uint>(meshes.size() - 1u)) {
                     $if (depth == 0u) {
                         radiance += light_emission;
-                    }
-                    $else {
+                    } $else {
                         Float pdf_light = length_squared(p - ray->origin()) / (light_area * cos_wo);
                         Float mis_weight = balanced_heuristic(pdf_bsdf, pdf_light);
                         radiance += mis_weight * beta * light_emission;
@@ -242,7 +255,12 @@ int main(int argc, char *argv[]) {
                 Float3 pp_light = offset_ray_origin(p_light, light_normal);
                 Float d_light = distance(pp, pp_light);
                 Float3 wi_light = normalize(pp_light - pp);
-                Var<Ray> shadow_ray = make_ray(offset_ray_origin(pp, n), wi_light, 0.f, d_light);
+                Var<Ray> shadow_ray = make_ray(
+                    offset_ray_origin(pp, n),
+                    wi_light,
+                    0.0f,
+                    d_light
+                );
                 Bool occluded = accel.intersect_any(shadow_ray, {});
                 Float cos_wi_light = dot(wi_light, n);
                 Float cos_light = -dot(light_normal, wi_light);
@@ -312,45 +330,33 @@ int main(int argc, char *argv[]) {
     static constexpr uint2 resolution = make_uint2(1024u);
     Image<float> framebuffer = device.create_image<float>(PixelStorage::HALF4, resolution);
     Image<float> accum_image = device.create_image<float>(PixelStorage::FLOAT4, resolution);
-    luisa::vector<std::array<uint8_t, 4u>> host_image(resolution.x * resolution.y);
+    luisa::vector<std::array<std::uint8_t, 4u>> host_image(resolution.x * resolution.y);
+    // luisa::vector<std::uint8_t> host_image(resolution.x * resolution.y * 4u); // is also ok
 
     Image<uint> seed_image = device.create_image<uint>(PixelStorage::INT1, resolution);
     stream << clear_shader(accum_image).dispatch(resolution)
-           << make_sampler_shader(seed_image).dispatch(resolution);
+           << make_sampler_shader(seed_image).dispatch(resolution)
+           << synchronize();
 
-    Window window{"path tracing", resolution};
-    Swapchain swap_chain = device.create_swapchain(
-        stream,
-        SwapchainOption {
-            .display = window.native_display(),
-            .window = window.native_handle(),
-            .size = make_uint2(resolution),
-            .wants_hdr = false,
-            .wants_vsync = false,
-            .back_buffer_count = 8,
-        }
-    );
-
-    Image<float> ldr_image = device.create_image<float>(swap_chain.backend_storage(), resolution);
-    double last_time { 0.0 };
-    uint frame_count { 0u };
-    Clock clock;
-
-    while (!window.should_close()) {
+    Clock clk;
+    Image<float> ldr_image = device.create_image<float>(PixelStorage::BYTE4, resolution);
+    for (std::size_t sample_index = 0; sample_index < samples_per_pixel / spp_per_dispatch; ++sample_index) {
         stream << raytracing_shader(framebuffer, seed_image, accel, resolution).dispatch(resolution)
                << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
-               << hdr2ldr_shader(accum_image, ldr_image, 2.f).dispatch(resolution)
-               << swap_chain.present(ldr_image)
-               << synchronize();
-        window.poll_events();
-        double dt = clock.toc() - last_time;
-        LUISA_INFO("dt = {:.2f}ms ({:.2f} spp/s)", dt, spp_per_dispatch / dt * 1000);
-        last_time = clock.toc();
-        frame_count += spp_per_dispatch;
+               << hdr2ldr_shader(accum_image, ldr_image, 2.0f).dispatch(resolution)
+               << [sample_index, spp_per_dispatch, samples_per_pixel, &clk] () {
+                    LUISA_INFO(
+                        "Samples: {} / {} ({:.1f}s)",
+                        (sample_index + 1u) * spp_per_dispatch,
+                        samples_per_pixel,
+                        clk.toc() * 1e-3
+                    );
+                };
     }
+
     stream << ldr_image.copy_to(host_image.data())
            << synchronize();
-    LUISA_INFO("FPS: {}", frame_count / clock.toc() * 1000);
+
     stbi_write_png("test_path_tracing.png", resolution.x, resolution.y, 4, host_image.data(), 0);
 
     return 0;
