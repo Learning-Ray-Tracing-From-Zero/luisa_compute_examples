@@ -2,6 +2,7 @@
 
 #include <cstdint> // std::uint32_t
 #include <array> // std::array
+#include <random> // std::random_device, std::mt19937, std::uniform_int_distribution
 #include <algorithm> // std::sort
 #include <functional> // std::less
 
