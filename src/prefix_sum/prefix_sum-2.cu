@@ -81,7 +81,8 @@ int main() {
     // Launch the CUDA kernel
     int grid_size = 1;
     int block_size = n;
-    kernel<<<grid_size, block_size, 2 * block_size * sizeof(float)>>>(in_arr_data, out_arr_data, block_size);
+    int shared_memory_size = 2 * block_size * sizeof(float);
+    kernel<<<grid_size, block_size, shared_memory_size>>>(in_arr_data, out_arr_data, block_size);
 
     // Wait for kernel execution to finish
     cudaStatus = cudaDeviceSynchronize();
