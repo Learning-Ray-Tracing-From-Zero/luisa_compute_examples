@@ -3,24 +3,32 @@
 #include <numeric>
 #include <cuda_runtime.h>
 
+// Each iteration uses different buffers for reading and writing,
+//   thereby avoiding concurrent reads and writes to the same memory location in the same iteration,
+//   simplifying data dependency management, and potentially improving performance
 
 // CUDA kernel for exclusive prefix sum within a block
+// in_arr: input array
+// out_arr: output array
+// n: the size of data processed by each thread block
 __global__ void kernel(float* in_arr, float* out_arr, int n) {
-    extern __shared__ float shared_arr[]; // allocated on invocation
+    // extern: indicates dynamically allocating its size during kernel calls
+    // __shared__: shared within a single thread block
+    extern __shared__ float shared_arr[];
     int thread_x = threadIdx.x;
     int thread_id = blockIdx.x * blockDim.x + thread_x;
-    int pout = 0;
-    int pin = 1;
+    int previous_out = 0;
+    int previous_in = 1;
 
     // Load input into shared memory (exclusive scan: shift right by one, first element is 0)
-    shared_arr[pout * n + thread_x] = (thread_x > 0 && thread_x < n) ? in_arr[thread_id - 1] : 0;
+    shared_arr[previous_out * n + thread_x] = (thread_x > 0 && thread_x < n) ? in_arr[thread_id - 1] : 0;
     __syncthreads();
 
     for (int offset = 1; offset < n; offset *= 2) {
-        pout = 1 - pout; // swap double buffer indices
-        pin = 1 - pout;
-        int index_pout = pout * n + thread_x;
-        int index_pin = pin * n + thread_x;
+        previous_out = 1 - previous_out; // swap double buffer indices
+        previous_in = 1 - previous_out;
+        int index_pout = previous_out * n + thread_x;
+        int index_pin = previous_in * n + thread_x;
         if (thread_x >= offset && thread_x < n) {
             shared_arr[index_pout] = shared_arr[index_pin] + shared_arr[index_pin - offset];
         } else if (thread_x < n) {
@@ -30,7 +38,7 @@ __global__ void kernel(float* in_arr, float* out_arr, int n) {
     }
 
     // Write output
-    if (thread_x < n) { out_arr[thread_id] = shared_arr[pout * n + thread_x]; }
+    if (thread_x < n) { out_arr[thread_id] = shared_arr[previous_out * n + thread_x]; }
 }
 
 
@@ -70,12 +78,10 @@ int main() {
         return 1;
     }
 
-    // Configure thread block and grid size
-    int blockSize = n;
-    int gridSize = 1;
-
     // Launch the CUDA kernel
-    kernel<<<gridSize, blockSize, 2 * blockSize * sizeof(float)>>>(in_arr_data, out_arr_data, blockSize);
+    int grid_size = 1;
+    int block_size = n;
+    kernel<<<grid_size, block_size, 2 * block_size * sizeof(float)>>>(in_arr_data, out_arr_data, block_size);
 
     // Wait for kernel execution to finish
     cudaStatus = cudaDeviceSynchronize();
