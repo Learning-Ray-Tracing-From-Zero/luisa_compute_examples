@@ -17,8 +17,9 @@ __global__ void init_array(int* arr) {
 
 __global__ void kernel(int* arr, int n, int d) {
     int k = blockDim.x * blockIdx.x + threadIdx.x;
-    if (k >= static_cast<int>(pow(2, d - 1)) && k < n) {
-        arr[k] = arr[k - static_cast<int>(pow(2, d - 1))] + arr[k];
+    int step = 1 << (d - 1);
+    if (k >= step && k < n) {
+        arr[k] = arr[k - step] + arr[k];
     }
 }
 
@@ -28,13 +29,13 @@ int main() {
     int *arr;
     cudaMallocManaged(&arr, n * sizeof(int));
 
-    init_array<<<1, 1, 1>>>(arr);
+    init_array<<<1, 1>>>(arr);
     cudaDeviceSynchronize();
     for (int i = 0; i < n; i++) { printf("%d ", arr[i]); }
     printf("\n");
 
     for (int d = 1; d <= static_cast<int>(log2(n)); ++d) {
-        kernel<<<8, 1, 1>>>(arr, n, d);
+        kernel<<<1, 8>>>(arr, n, d);
         cudaDeviceSynchronize();
         for (int i = 0; i < n; i++) { printf("%d ", arr[i]); }
         printf("\n");
