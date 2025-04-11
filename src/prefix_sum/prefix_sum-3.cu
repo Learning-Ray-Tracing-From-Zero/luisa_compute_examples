@@ -30,7 +30,7 @@ int main() {
     int *arr;
     cudaMallocManaged(&arr, n * sizeof(int));
 
-    init_array<<<1, 1, 1>>>(arr);
+    init_array<<<1, 1>>>(arr);
     cudaDeviceSynchronize();
     for (int i = 0; i < n; i++) { printf("%d ", arr[i]); }
     printf("\n");
