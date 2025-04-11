@@ -17,11 +17,9 @@ __global__ void init_array(int* arr) {
 
 __global__ void block_prefix_sum(int* arr, int n) {
     int thread_x = threadIdx.x;
-    for (int d = 1; d <= ceil(log2(n)); ++d) {
-        int step = 1 << (d - 1);
-        if (thread_x >= step && thread_x < n) {
-            arr[thread_x] += arr[thread_x - step];
-        }
+    for (int offset = 1; offset < n; offset *= 2) {
+        int index = thread_x + offset;
+        if (index < n) { arr[index] += arr[thread_x]; }
         __syncthreads();
     }
 }
