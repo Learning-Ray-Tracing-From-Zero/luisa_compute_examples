@@ -3,6 +3,9 @@
 #include <luisa/dsl/sugar.h>
 #include <luisa/luisa-compute.h>
 
+using namespace luisa;
+using namespace luisa::compute;
+
 
 struct Onb {
     float3 tangent;

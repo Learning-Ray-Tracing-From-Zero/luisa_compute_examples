@@ -1,12 +1,15 @@
 #include "camera.hpp"
 #include "camera_control.hpp"
+#include <cornell_box.h>
 
+#include <luisa/gui/window.h>
+#include <luisa/gui/input.h>
 #include <luisa/backends/ext/dx_hdr_ext.hpp>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 #include <stb/stb_image_write.h>
-#include <cornell_box.h>
+
 
 #include <string>
 #include <cstdint>
@@ -319,7 +322,7 @@ int main(int argc, char *argv[]) {
         .fov = 27.8f
     };
     OrbitController camera_controller { camera, 1.0f, 20.0f, 0.5f};
-    Window window { "path tracing", resolution };
+    Window window { "path tracing with camera", resolution };
     Swapchain swap_chain = device.create_swapchain(
         stream,
         SwapchainOption {
