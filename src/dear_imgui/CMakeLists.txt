@@ -6,7 +6,7 @@ message("GLFW_DIR: ${GLFW_DIR}")
 message("DEAR_IMGUI_DIR: ${DEAR_IMGUI_DIR}")
 add_executable(
     dear_imgui
-    test_dear_imgui.cpp
+    dear_imgui.cpp
     ${DEAR_IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${DEAR_IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
     ${DEAR_IMGUI_DIR}/imgui.cpp

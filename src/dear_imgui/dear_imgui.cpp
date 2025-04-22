@@ -335,9 +335,6 @@ int main(int argc, char *argv[]) {
            << synchronize();
 
     // Imgui
-    float clear_color[4] = { 0.45f, 0.55f, 0.60f, 1.00f };
-
-    clock.tic();
     ImGuiWindow imgui_window {
         device,
         stream,
@@ -360,6 +357,7 @@ int main(int argc, char *argv[]) {
     Clock clock;
     auto last_time { 0.0 };
     auto frame_count { 0u };
+    float clear_color[4] = { 0.45f, 0.55f, 0.60f, 1.00f };
     Image<float> ldr_image = device.create_image<float>(PixelStorage::BYTE4, resolution);
     while (!imgui_window.should_close()) {
         imgui_window.prepare_frame();
@@ -379,6 +377,7 @@ int main(int argc, char *argv[]) {
             ImGui::Begin("Hello, world!"); // Create a window called "Hello, world!" and append into it.
             ImGui::Text("This is some useful text."); // Display some text (you can use a format strings too)
             ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
+            ImGui::Text("counter = %d", frame_count);
             auto &io = ImGui::GetIO();
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::End();
