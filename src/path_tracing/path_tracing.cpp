@@ -41,7 +41,10 @@ int main(int argc, char *argv[]) {
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
     int samples_per_pixel = std::stoi(argv[2]);
-    bool is_offline_render = std::string(argv[3]) == "progressive_render" ? false : true;
+    bool is_offline_render = (
+        (argc == 4)
+        && (std::string(argv[3]) == "progressive_render")
+    ) ? false : true;
 
     // load the cornell box scene
     tinyobj::ObjReaderConfig obj_reader_config;
@@ -385,12 +388,10 @@ int main(int argc, char *argv[]) {
                         );
                    };
         }
+
+        stream << ldr_image.copy_to(host_image.data()) << synchronize();
+        stbi_write_png("test_path_tracing.png", resolution.x, resolution.y, 4, host_image.data(), 0);
     }
-
-    stream << ldr_image.copy_to(host_image.data())
-           << synchronize();
-
-    stbi_write_png("test_path_tracing.png", resolution.x, resolution.y, 4, host_image.data(), 0);
 
     return 0;
 }
