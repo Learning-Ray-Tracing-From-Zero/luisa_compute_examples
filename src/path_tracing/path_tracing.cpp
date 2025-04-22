@@ -30,11 +30,11 @@ LUISA_STRUCT(Onb, tangent, binormal, normal) {
 
 
 int main(int argc, char *argv[]) {
-    if (argc <= 1) {
-        LUISA_INFO(
-            "Usage: {} <backend> <spp>\nbackend: cuda, dx, cpu, metal\nspp: preferably an integer multiple of 64",
-            argv[0]
-        );
+    if (argc <= 2) {
+        LUISA_INFO("Usage: {} <backend> <spp>", argv[0]);
+        LUISA_INFO("backend: cuda, dx, cpu, metal");
+        LUISA_INFO("spp: int number(preferably an integer multiple of 64)");
+        LUISA_INFO("interactive: progressive_render");
         exit(1);
     }
 
@@ -42,6 +42,7 @@ int main(int argc, char *argv[]) {
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
     int samples_per_pixel = std::stoi(argv[2]);
+    bool is_offline_render = std::string(argv[3]) == "progressive_render" ? false : true;
 
     // load the cornell box scene
     tinyobj::ObjReaderConfig obj_reader_config;
@@ -192,10 +193,11 @@ int main(int argc, char *argv[]) {
         return pdf_a / max(pdf_a + pdf_b, 1e-4f);
     };
 
-    auto spp_per_dispatch =
-        device.backend_name() == "metal" || device.backend_name() == "cpu" || device.backend_name() == "fallback"
-        ? 1u
-        : 64u;
+    auto spp_per_dispatch = (
+        device.backend_name() == "metal"
+        || device.backend_name() == "cpu"
+        || device.backend_name() == "fallback"
+    ) ? 1u : 64u;
     // auto spp_per_dispatch = 1u;
     Kernel2D raytracing_kernel = [&](
         ImageFloat image,
@@ -339,20 +341,51 @@ int main(int argc, char *argv[]) {
            << make_sampler_shader(seed_image).dispatch(resolution)
            << synchronize();
 
-    Clock clk;
-    Image<float> ldr_image = device.create_image<float>(PixelStorage::BYTE4, resolution);
-    for (std::size_t sample_index = 0; sample_index < samples_per_pixel / spp_per_dispatch; ++sample_index) {
-        stream << raytracing_shader(framebuffer, seed_image, accel, resolution).dispatch(resolution)
-               << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
-               << hdr2ldr_shader(accum_image, ldr_image, 2.0f).dispatch(resolution)
-               << [sample_index, spp_per_dispatch, samples_per_pixel, &clk] () {
-                    LUISA_INFO(
-                        "Samples: {} / {} ({:.1f}s)",
-                        (sample_index + 1u) * spp_per_dispatch,
-                        samples_per_pixel,
-                        clk.toc() * 1e-3
-                    );
-                };
+    Clock clock;
+    Image<float> ldr_image;
+    if (!is_offline_render) {
+        Window window { "path_tracing", resolution };
+        Swapchain swap_chain = device.create_swapchain(
+            stream,
+            SwapchainOption {
+                .display = window.native_display(),
+                .window = window.native_handle(),
+                .size = make_uint2(resolution),
+                .wants_hdr = false,
+                .wants_vsync = false,
+                .back_buffer_count = 8
+            }
+        );
+        ldr_image = device.create_image<float>(swap_chain.backend_storage(), resolution);
+        double last_time { 0.0 };
+        uint frame_count { 0u };
+        while (!window.should_close()) {
+            stream << raytracing_shader(framebuffer, seed_image, accel, resolution).dispatch(resolution)
+                   << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
+                   << hdr2ldr_shader(accum_image, ldr_image, 2.0f).dispatch(resolution)
+                   << swap_chain.present(ldr_image)
+                   << synchronize();
+            window.poll_events();
+            double dt = clock.toc() - last_time;
+            LUISA_INFO("dt = {:.2f}ms ({:.2f} spp/s)", dt, spp_per_dispatch / dt * 1000);
+            last_time = clock.toc();
+            frame_count += spp_per_dispatch;
+        }
+    } else {
+        ldr_image = device.create_image<float>(PixelStorage::BYTE4, resolution);
+        for (std::size_t sample_index = 0; sample_index < samples_per_pixel / spp_per_dispatch; ++sample_index) {
+            stream << raytracing_shader(framebuffer, seed_image, accel, resolution).dispatch(resolution)
+                << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
+                << hdr2ldr_shader(accum_image, ldr_image, 2.0f).dispatch(resolution)
+                << [sample_index, spp_per_dispatch, samples_per_pixel, &clock] () {
+                        LUISA_INFO(
+                            "Samples: {} / {} ({:.2f}s)",
+                            (sample_index + 1u) * spp_per_dispatch,
+                            samples_per_pixel,
+                            clock.toc() * 1e-3
+                        );
+                   };
+        }
     }
 
     stream << ldr_image.copy_to(host_image.data())
