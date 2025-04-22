@@ -8,6 +8,7 @@
 #include <cornell_box.h>
 
 #include <string>
+#include <cstdint>
 #include <iostream>
 
 using namespace luisa;
@@ -309,7 +310,7 @@ int main(int argc, char *argv[]) {
 
     Kernel2D clear_kernel = [](ImageFloat image) noexcept {
         set_name("clear_kernel");
-        image.write(dispatch_id().xy(), make_float4(0.f));
+        image.write(dispatch_id().xy(), make_float4(0.0f));
     };
 
     Kernel2D hdr2ldr_kernel = [&](ImageFloat hdr_image, ImageFloat ldr_image, Float scale) noexcept {
@@ -317,7 +318,7 @@ int main(int argc, char *argv[]) {
         UInt2 coord = dispatch_id().xy();
         Float4 hdr = hdr_image.read(coord);
         Float3 ldr = linear_to_srgb(clamp(hdr.xyz() / hdr.w * scale, 0.f, 1.f));
-        ldr_image.write(coord, make_float4(ldr, 1.f));
+        ldr_image.write(coord, make_float4(ldr, 1.0f));
     };
 
     ShaderOption o{.enable_debug_info = false};
