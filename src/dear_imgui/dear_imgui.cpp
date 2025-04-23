@@ -373,7 +373,7 @@ int main(int argc, char *argv[]) {
             ImGui::Text("frame counter = %d", frame_count);
             auto dt = clock.toc() - last_time;
             last_time = clock.toc();
-            ImGui::Text("dt = {:.2f}ms ({:.2f} spp/s)", dt, spp_per_dispatch / dt * 1000);
+            ImGui::Text("dt = %.3f ms (%.3f spp/s)", dt, spp_per_dispatch / dt * 1000.0);
             ImGui::End();
         }
 
