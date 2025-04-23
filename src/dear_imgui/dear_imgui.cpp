@@ -34,16 +34,14 @@ LUISA_STRUCT(Onb, tangent, binormal, normal) {
 };
 
 int main(int argc, char *argv[]) {
-    if (argc <= 2) {
+    if (argc <= 1) {
         LUISA_INFO("Usage: {} <backend> <spp>", argv[0]);
         LUISA_INFO("backend: cuda, dx, cpu, metal");
-        LUISA_INFO("spp: int number(preferably an integer multiple of 64)");
         exit(1);
     }
 
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
-    int samples_per_pixel = std::stoi(argv[2]);
 
     // load the cornell box scene
     tinyobj::ObjReaderConfig obj_reader_config;
@@ -191,12 +189,15 @@ int main(int argc, char *argv[]) {
         return pdf_a / max(pdf_a + pdf_b, 1e-4f);
     };
 
-    auto spp_per_dispatch = 1u;
+    auto spp_per_dispatch { 1 };
+    auto depth_per_tracing { 5 };
     Kernel2D raytracing_kernel = [&](
         ImageFloat image,
         ImageUInt seed_image,
         AccelVar accel,
-        UInt2 resolution
+        UInt2 resolution,
+        Int spp_per_dispatch,
+        Int depth_per_tracing
     ) noexcept {
         set_name("raytracing_kernel");
         set_block_size(16u, 16u, 1u);
@@ -217,7 +218,7 @@ int main(int argc, char *argv[]) {
             constexpr float3 light_emission = make_float3(17.0f, 12.0f, 4.0f);
             Float light_area = length(cross(light_u, light_v));
             Float3 light_normal = normalize(cross(light_u, light_v));
-            $for (depth, 10u) {
+            $for (depth, depth_per_tracing) {
                 // trace
                 Var<TriangleHit> hit = accel.intersect(ray, {});
                 reorder_shader_execution();
@@ -289,7 +290,7 @@ int main(int argc, char *argv[]) {
                 beta *= 1.0f / q;
             };
         };
-        radiance /= static_cast<float>(spp_per_dispatch);
+        radiance /= static_cast<Float>(spp_per_dispatch);
         seed_image.write(coord, make_uint4(state));
         $if (any(dsl::isnan(radiance))) { radiance = make_float3(0.0f); };
         image.write(dispatch_id().xy(), make_float4(clamp(radiance, 0.0f, 30.0f), 1.0f));
@@ -352,12 +353,18 @@ int main(int argc, char *argv[]) {
     });
 
     Clock clock;
-    auto frame_count { 0u };
-    float clear_color[4] = { 0.45f, 0.55f, 0.60f, 1.00f };
+    auto frame_count { 0 };
     while (!imgui_window.should_close()) {
         imgui_window.prepare_frame();
         if (imgui_window.framebuffer()) {
-            stream << raytracing_shader(framebuffer, seed_image, accel, resolution).dispatch(resolution)
+            stream << raytracing_shader(
+                        framebuffer,
+                        seed_image,
+                        accel,
+                        resolution,
+                        spp_per_dispatch,
+                        depth_per_tracing
+                    ).dispatch(resolution)
                    << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
                    << hdr2ldr_shader(accum_image, imgui_window.framebuffer(), 2.0f).dispatch(resolution)
                    << synchronize();
@@ -369,7 +376,8 @@ int main(int argc, char *argv[]) {
             ImGui::Text("frame counter = %d", frame_count);
             auto &io = ImGui::GetIO();
             ImGui::Text("average %.3f ms/frame (%.3f spp/s)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
+            ImGui::SliderInt("spp per dispatch", &spp_per_dispatch, 1, 64);
+            ImGui::SliderInt("depth per tracing", &depth_per_tracing, 1, 16);
             ImGui::End();
         }
 
