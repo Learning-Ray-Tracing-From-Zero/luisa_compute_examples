@@ -2,14 +2,17 @@
 #include "camera_control.hpp"
 #include <cornell_box.h>
 
-#include <luisa/gui/window.h>
+#include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <luisa/gui/imgui_window.h>
+#include <luisa/dsl/sugar.h>
+#include <luisa/luisa-compute.h>
 #include <luisa/gui/input.h>
 #include <luisa/backends/ext/dx_hdr_ext.hpp>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 #include <stb/stb_image_write.h>
-
 
 #include <string>
 #include <cstdint>
@@ -26,7 +29,6 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    log_level_verbose();
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
 
@@ -89,9 +91,7 @@ int main(int argc, char *argv[]) {
     }
 
     Accel accel = device.create_accel({});
-    for (Mesh &m : meshes) {
-        accel.emplace_back(m, make_float4x4(1.0f));
-    }
+    for (Mesh &m : meshes) { accel.emplace_back(m, make_float4x4(1.0f)); }
     stream << heap.update()
            << accel.build()
            << synchronize();
@@ -108,14 +108,12 @@ int main(int argc, char *argv[]) {
     };
 
     Callable linear_to_srgb = [](Var<float3> x) noexcept {
-        return clamp(
+        return saturate(
             select(
                 1.055f * pow(x, 1.0f / 2.4f) - 0.055f,
                 12.92f * x,
                 x <= 0.00031308f
-            ),
-            0.0f,
-            1.0f
+            )
         );
     };
 
@@ -143,7 +141,7 @@ int main(int argc, char *argv[]) {
         constexpr uint lcg_c = 1013904223u;
         state = lcg_a * state + lcg_c;
         return cast<float>(state & 0x00ffffffu) *
-               (1.0f / static_cast<float>(0x01000000u));
+            (1.0f / static_cast<float>(0x01000000u));
     };
 
     Callable make_onb = [](const Float3 &normal) noexcept {
@@ -171,12 +169,16 @@ int main(int argc, char *argv[]) {
         return pdf_a / max(pdf_a + pdf_b, 1e-4f);
     };
 
+    auto spp_per_dispatch { 1 };
+    auto depth_per_tracing { 5 };
     Kernel2D raytracing_kernel = [&](
         ImageFloat image,
         ImageUInt seed_image,
         Var<Camera> camera,
         AccelVar accel,
-        UInt2 resolution
+        UInt2 resolution,
+        Int spp_per_dispatch,
+        Int depth_per_tracing
     ) noexcept {
         set_name("raytracing_kernel");
         set_block_size(16u, 16u, 1u);
@@ -187,85 +189,89 @@ int main(int argc, char *argv[]) {
         Float ry = lcg(state);
         Float2 pixel = (make_float2(coord) + make_float2(rx, ry)) / frame_size * 2.0f - 1.0f;
         Float3 radiance = def(make_float3(0.0f));
-        Var<Ray> ray = camera->generate_ray(pixel * make_float2(1.0f, -1.0f));
-        Float3 beta = def(make_float3(1.0f));
-        Float pdf_bsdf = def(0.0f);
-        constexpr float3 light_position = make_float3(-0.24f, 1.98f, 0.16f);
-        constexpr float3 light_u = make_float3(-0.24f, 1.98f, -0.22f) - light_position;
-        constexpr float3 light_v = make_float3(0.23f, 1.98f, 0.16f) - light_position;
-        constexpr float3 light_emission = make_float3(17.0f, 12.0f, 4.0f);
-        Float light_area = length(cross(light_u, light_v));
-        Float3 light_normal = normalize(cross(light_u, light_v));
-        $for (depth, 10u) {
-            // trace
-            Var<TriangleHit> hit = accel.intersect(ray, {});
-            $if (hit->miss()) { $break; };
-            Var<Triangle> triangle = heap->buffer<Triangle>(hit.inst).read(hit.prim);
-            Float3 p0 = vertex_buffer->read(triangle.i0);
-            Float3 p1 = vertex_buffer->read(triangle.i1);
-            Float3 p2 = vertex_buffer->read(triangle.i2);
-            Float3 p = triangle_interpolate(hit.bary, p0, p1, p2);
-            Float3 n = normalize(cross(p1 - p0, p2 - p0));
-            Float cos_wo = dot(-ray->direction(), n);
-            $if (cos_wo < 1e-4f) { $break; };
+        $for (i, spp_per_dispatch) {
+            Var<Ray> ray = camera->generate_ray(pixel * make_float2(1.0f, -1.0f));
+            Float3 beta = def(make_float3(1.0f));
+            Float pdf_bsdf = def(0.0f);
+            constexpr float3 light_position = make_float3(-0.24f, 1.98f, 0.16f);
+            constexpr float3 light_u = make_float3(-0.24f, 1.98f, -0.22f) - light_position;
+            constexpr float3 light_v = make_float3(0.23f, 1.98f, 0.16f) - light_position;
+            constexpr float3 light_emission = make_float3(17.0f, 12.0f, 4.0f);
+            Float light_area = length(cross(light_u, light_v));
+            Float3 light_normal = normalize(cross(light_u, light_v));
+            $for (depth, depth_per_tracing) {
+                // trace
+                Var<TriangleHit> hit = accel.intersect(ray, {});
+                reorder_shader_execution();
+                $if (hit->miss()) { $break; };
+                Var<Triangle> triangle = heap->buffer<Triangle>(hit.inst).read(hit.prim);
+                Float3 p0 = vertex_buffer->read(triangle.i0);
+                Float3 p1 = vertex_buffer->read(triangle.i1);
+                Float3 p2 = vertex_buffer->read(triangle.i2);
+                Float3 p = triangle_interpolate(hit.bary, p0, p1, p2);
+                Float3 n = normalize(cross(p1 - p0, p2 - p0));
+                Float cos_wo = dot(-ray->direction(), n);
+                $if (cos_wo < 1e-4f) { $break; };
 
-            // hit light
-            $if (hit.inst == static_cast<uint>(meshes.size() - 1u)) {
-                $if (depth == 0u) {
-                    radiance += light_emission;
-                } $else {
-                    Float pdf_light = length_squared(p - ray->origin()) / (light_area * cos_wo);
-                    Float mis_weight = balanced_heuristic(pdf_bsdf, pdf_light);
-                    radiance += mis_weight * beta * light_emission;
+                // hit light
+                $if (hit.inst == static_cast<uint>(meshes.size() - 1u)) {
+                    $if (depth == 0u) {
+                        radiance += light_emission;
+                    } $else {
+                        Float pdf_light = length_squared(p - ray->origin()) / (light_area * cos_wo);
+                        Float mis_weight = balanced_heuristic(pdf_bsdf, pdf_light);
+                        radiance += mis_weight * beta * light_emission;
+                    };
+                    $break;
                 };
-                $break;
+
+                // sample light
+                Float ux_light = lcg(state);
+                Float uy_light = lcg(state);
+                Float3 p_light = light_position + ux_light * light_u + uy_light * light_v;
+                Float3 pp = offset_ray_origin(p, n);
+                Float3 pp_light = offset_ray_origin(p_light, light_normal);
+                Float d_light = distance(pp, pp_light);
+                Float3 wi_light = normalize(pp_light - pp);
+                Var<Ray> shadow_ray = make_ray(
+                    offset_ray_origin(pp, n),
+                    wi_light,
+                    0.0f,
+                    d_light
+                );
+                Bool occluded = accel.intersect_any(shadow_ray, {});
+                Float cos_wi_light = dot(wi_light, n);
+                Float cos_light = -dot(light_normal, wi_light);
+                Float3 albedo = materials.read(hit.inst);
+                $if (!occluded & cos_wi_light > 1e-4f & cos_light > 1e-4f) {
+                    Float pdf_light = (d_light * d_light) / (light_area * cos_light);
+                    Float pdf_bsdf = cos_wi_light * inv_pi;
+                    Float mis_weight = balanced_heuristic(pdf_light, pdf_bsdf);
+                    Float3 bsdf = albedo * inv_pi * cos_wi_light;
+                    radiance += beta * bsdf * mis_weight * light_emission / max(pdf_light, 1e-4f);
+                };
+
+                // sample BSDF
+                Var<Onb> onb = make_onb(n);
+                Float ux = lcg(state);
+                Float uy = lcg(state);
+                Float3 wi_local = cosine_sample_hemisphere(make_float2(ux, uy));
+                Float cos_wi = abs(wi_local.z);
+                Float3 new_direction = onb->to_world(wi_local);
+                ray = make_ray(pp, new_direction);
+                pdf_bsdf = cos_wi * inv_pi;
+                beta *= albedo; // * cos_wi * inv_pi / pdf_bsdf => * 1.0f
+
+                // rr
+                Float l = dot(make_float3(0.212671f, 0.715160f, 0.072169f), beta);
+                $if (l == 0.0f) { $break; };
+                Float q = max(l, 0.05f);
+                Float r = lcg(state);
+                $if (r >= q) { $break; };
+                beta *= 1.0f / q;
             };
-
-            // sample light
-            Float ux_light = lcg(state);
-            Float uy_light = lcg(state);
-            Float3 p_light = light_position + ux_light * light_u + uy_light * light_v;
-            Float3 pp = offset_ray_origin(p, n);
-            Float3 pp_light = offset_ray_origin(p_light, light_normal);
-            Float d_light = distance(pp, pp_light);
-            Float3 wi_light = normalize(pp_light - pp);
-            Var<Ray> shadow_ray = make_ray(
-                offset_ray_origin(pp, n),
-                wi_light,
-                0.0f,
-                d_light
-            );
-            Bool occluded = accel.intersect_any(shadow_ray, {});
-            Float cos_wi_light = dot(wi_light, n);
-            Float cos_light = -dot(light_normal, wi_light);
-            Float3 albedo = materials.read(hit.inst);
-            $if (!occluded & cos_wi_light > 1e-4f & cos_light > 1e-4f) {
-                Float pdf_light = (d_light * d_light) / (light_area * cos_light);
-                Float pdf_bsdf = cos_wi_light * inv_pi;
-                Float mis_weight = balanced_heuristic(pdf_light, pdf_bsdf);
-                Float3 bsdf = albedo * inv_pi * cos_wi_light;
-                radiance += beta * bsdf * mis_weight * light_emission / max(pdf_light, 1e-4f);
-            };
-
-            // sample BSDF
-            Var<Onb> onb = make_onb(n);
-            Float ux = lcg(state);
-            Float uy = lcg(state);
-            Float3 wi_local = cosine_sample_hemisphere(make_float2(ux, uy));
-            Float cos_wi = abs(wi_local.z);
-            Float3 new_direction = onb->to_world(wi_local);
-            ray = make_ray(pp, new_direction);
-            pdf_bsdf = cos_wi * inv_pi;
-            beta *= albedo;// * cos_wi * inv_pi / pdf_bsdf => * 1.f
-
-            // rr
-            Float l = dot(make_float3(0.212671f, 0.715160f, 0.072169f), beta);
-            $if (l == 0.0f) { $break; };
-            Float q = max(l, 0.05f);
-            Float r = lcg(state);
-            $if (r >= q) { $break; };
-            beta *= 1.0f / q;
         };
+        radiance /= static_cast<Float>(spp_per_dispatch);
         seed_image.write(coord, make_uint4(state));
         $if (any(dsl::isnan(radiance))) { radiance = make_float3(0.0f); };
         image.write(dispatch_id().xy(), make_float4(clamp(radiance, 0.0f, 30.0f), 1.0f));
@@ -276,16 +282,7 @@ int main(int argc, char *argv[]) {
         UInt2 p = dispatch_id().xy();
         Float4 accum = accum_image.read(p);
         Float3 curr = curr_image.read(p).xyz();
-        accum_image.write(p, accum + make_float4(curr, 1.f));
-    };
-
-    Callable aces_tonemapping = [](Float3 x) noexcept {
-        static constexpr float a = 2.51f;
-        static constexpr float b = 0.03f;
-        static constexpr float c = 2.43f;
-        static constexpr float d = 0.59f;
-        static constexpr float e = 0.14f;
-        return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f, 1.0f);
+        accum_image.write(p, accum + make_float4(curr, 1.0f));
     };
 
     Kernel2D clear_kernel = [](ImageFloat image) noexcept {
@@ -293,27 +290,30 @@ int main(int argc, char *argv[]) {
         image.write(dispatch_id().xy(), make_float4(0.0f));
     };
 
-    Kernel2D hdr2ldr_kernel = [&](ImageFloat hdr_image, ImageFloat ldr_image, Float scale, Bool is_hdr) noexcept {
+    Kernel2D hdr2ldr_kernel = [&](ImageFloat hdr_image, ImageFloat ldr_image, Float scale) noexcept {
         set_name("hdr2ldr_kernel");
         UInt2 coord = dispatch_id().xy();
         Float4 hdr = hdr_image.read(coord);
-        Float3 ldr = hdr.xyz() / hdr.w * scale;
-        $if (!is_hdr) { ldr = linear_to_srgb(ldr); };
+        Float3 ldr = linear_to_srgb(clamp(hdr.xyz() / hdr.w * scale, 0.0f, 1.0f));
         ldr_image.write(coord, make_float4(ldr, 1.0f));
     };
 
-    auto clear_shader = device.compile(clear_kernel);
-    auto hdr2ldr_shader = device.compile(hdr2ldr_kernel);
-    auto accumulate_shader = device.compile(accumulate_kernel);
-    auto raytracing_shader = device.compile(raytracing_kernel);
-    auto make_sampler_shader = device.compile(make_sampler_kernel);
+    ShaderOption o { .enable_debug_info = false };
+    auto clear_shader = device.compile(clear_kernel, o);
+    auto hdr2ldr_shader = device.compile(hdr2ldr_kernel, o);
+    auto accumulate_shader = device.compile(accumulate_kernel, o);
+    auto raytracing_shader = device.compile(raytracing_kernel, ShaderOption{.name = "path_tracing"});
+    auto make_sampler_shader = device.compile(make_sampler_kernel, o);
 
     static constexpr uint2 resolution = make_uint2(1024u);
     Image<float> framebuffer = device.create_image<float>(PixelStorage::HALF4, resolution);
     Image<float> accum_image = device.create_image<float>(PixelStorage::FLOAT4, resolution);
-    luisa::vector<std::array<std::uint8_t, 4u>> host_image(resolution.x * resolution.y);
     Image<uint> seed_image = device.create_image<uint>(PixelStorage::INT1, resolution);
+    stream << clear_shader(accum_image).dispatch(resolution)
+           << make_sampler_shader(seed_image).dispatch(resolution)
+           << synchronize();
 
+    // Camera
     Camera camera {
         .position = make_float3(-0.01f, 0.995f, 5.0f),
         .front = make_float3(0.0f, 0.0f, -1.0f),
@@ -322,105 +322,143 @@ int main(int argc, char *argv[]) {
         .fov = 27.8f
     };
     OrbitController camera_controller { camera, 1.0f, 20.0f, 0.5f};
-    Window window { "path tracing with camera", resolution };
-    Swapchain swap_chain = device.create_swapchain(
+
+    // Imgui
+    ImGuiWindow imgui_window {
+        device,
         stream,
-        SwapchainOption {
-            .display = window.native_display(),
-            .window = window.native_handle(),
+        "Display",
+        {
             .size = resolution,
-            .wants_hdr = false,
-            .wants_vsync = false,
-            .back_buffer_count = 2,
+            .resizable = true,
+            .vsync = false,
+            .docking = true
         }
-    );
-    Image<float> ldr_image = device.create_image<float>(swap_chain.backend_storage(), resolution);
+    };
+    imgui_window.with_context([&] {
+        ImGui::StyleColorsDark();
+        auto &style = ImGui::GetStyle();
+        style.TabRounding = 0.0f;
+    });
+    GLFWwindow* glfw_window = imgui_window.handle();
 
-    auto last_time { 0.0 };
-    auto frame_count { 0u };
     Clock clock;
-
-    auto is_dirty { true };
+    auto last_time { 0.0 };
     auto delta_time { 0.0 };
+    auto is_dirty { true };
+    auto frame_count { 0 };
     CommandList cmd_list;
-    cmd_list << make_sampler_shader(seed_image).dispatch(resolution);
-    while (!window.should_close()) {
+    while (!imgui_window.should_close()) {
+        imgui_window.prepare_frame();
         if (is_dirty) {
             cmd_list << clear_shader(accum_image).dispatch(resolution);
             is_dirty = false;
         }
-        cmd_list << raytracing_shader(framebuffer, seed_image, camera, accel, resolution).dispatch(resolution)
-                 << accumulate_shader(accum_image, framebuffer).dispatch(resolution);
-        cmd_list << hdr2ldr_shader(accum_image, ldr_image, 1.0f, swap_chain.backend_storage() != PixelStorage::BYTE4).dispatch(resolution);
         stream << cmd_list.commit()
-               << swap_chain.present(ldr_image);
-        window.poll_events();
+               << raytracing_shader(
+                    framebuffer,
+                    seed_image,
+                    camera,
+                    accel,
+                    resolution,
+                    spp_per_dispatch,
+                    depth_per_tracing
+                ).dispatch(resolution)
+                << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
+                << hdr2ldr_shader(accum_image, imgui_window.framebuffer(), 2.0f).dispatch(resolution)
+                << synchronize();
+        frame_count += spp_per_dispatch;
+
+        ImGui::Begin("Render Info");
+        ImGui::Text("frame counter = %d", frame_count);
+        auto &io = ImGui::GetIO();
+        ImGui::Text("average %.3f ms/frame (%.3f spp/s)", 1000.0f / io.Framerate, io.Framerate);
+        ImGui::SliderInt("spp per dispatch", &spp_per_dispatch, 1, 64);
+        ImGui::SliderInt("depth per tracing", &depth_per_tracing, 1, 16);
+        ImGui::End();
+
         delta_time = clock.toc() - last_time;
         last_time = clock.toc();
-        frame_count++;
         auto dt = static_cast<float>(delta_time / 1000.0);
-        if (window.is_key_down(KEY_W)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_W)) != GLFW_RELEASE) {
             camera_controller.rotate_pitch(dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_S)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_S)) != GLFW_RELEASE) {
             camera_controller.rotate_pitch(-dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_A)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_A)) != GLFW_RELEASE) {
             camera_controller.rotate_yaw(dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_D)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_D)) != GLFW_RELEASE) {
             camera_controller.rotate_yaw(-dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_Q)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_Q)) != GLFW_RELEASE) {
             camera_controller.rotate_roll(-dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_E)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_E)) != GLFW_RELEASE) {
             camera_controller.rotate_roll(dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_MINUS)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_MINUS)) != GLFW_RELEASE) {
             camera_controller.zoom(-dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_EQUAL)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_EQUAL)) != GLFW_RELEASE) {
             camera_controller.zoom(dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_UP)) {
-            if (window.is_key_down(KEY_LEFT_SHIFT) || window.is_key_down(KEY_RIGHT_SHIFT)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_UP)) != GLFW_RELEASE) {
+            if (
+                glfwGetKey(glfw_window, static_cast<int>(KEY_LEFT_SHIFT)) != GLFW_RELEASE
+                || glfwGetKey(glfw_window, static_cast<int>(KEY_RIGHT_SHIFT)) != GLFW_RELEASE
+            ) {
                 camera_controller.move_forward(dt);
             } else {
                 camera_controller.move_up(dt);
             }
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_DOWN)) {
-            if (window.is_key_down(KEY_LEFT_SHIFT) || window.is_key_down(KEY_RIGHT_SHIFT)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_DOWN)) != GLFW_RELEASE) {
+            if (
+                glfwGetKey(glfw_window, static_cast<int>(KEY_LEFT_SHIFT)) != GLFW_RELEASE
+                || glfwGetKey(glfw_window, static_cast<int>(KEY_RIGHT_SHIFT)) != GLFW_RELEASE
+            ) {
                 camera_controller.move_forward(-dt);
             } else {
                 camera_controller.move_up(-dt);
             }
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_LEFT)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_LEFT)) != GLFW_RELEASE) {
             camera_controller.move_right(-dt);
             is_dirty = true;
+            frame_count = 0;
         }
-        if (window.is_key_down(KEY_RIGHT)) {
+        if (glfwGetKey(glfw_window, static_cast<int>(KEY_RIGHT)) != GLFW_RELEASE) {
             camera_controller.move_right(dt);
             is_dirty = true;
+            frame_count = 0;
         }
+
+        imgui_window.render_frame();
     }
 
-    stream << ldr_image.copy_to(host_image.data())
-           << synchronize();
-    LUISA_INFO("FPS: {}", frame_count / clock.toc() * 1000);
-    stbi_write_png("test_path_tracing_camera.png", resolution.x, resolution.y, 4, host_image.data(), 0);
+    stream.synchronize();
 
     return 0;
 }
