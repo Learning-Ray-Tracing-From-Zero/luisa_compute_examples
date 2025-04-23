@@ -41,7 +41,6 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    log_level_verbose();
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
     int samples_per_pixel = std::stoi(argv[2]);
@@ -105,9 +104,7 @@ int main(int argc, char *argv[]) {
     }
 
     Accel accel = device.create_accel({});
-    for (Mesh &m : meshes) {
-        accel.emplace_back(m, make_float4x4(1.0f));
-    }
+    for (Mesh &m : meshes) { accel.emplace_back(m, make_float4x4(1.0f)); }
     stream << heap.update()
            << accel.build()
            << synchronize();
@@ -281,7 +278,7 @@ int main(int argc, char *argv[]) {
                 Float3 new_direction = onb->to_world(wi_local);
                 ray = make_ray(pp, new_direction);
                 pdf_bsdf = cos_wi * inv_pi;
-                beta *= albedo;// * cos_wi * inv_pi / pdf_bsdf => * 1.f
+                beta *= albedo; // * cos_wi * inv_pi / pdf_bsdf => * 1.0f
 
                 // rr
                 Float l = dot(make_float3(0.212671f, 0.715160f, 0.072169f), beta);
@@ -303,7 +300,7 @@ int main(int argc, char *argv[]) {
         UInt2 p = dispatch_id().xy();
         Float4 accum = accum_image.read(p);
         Float3 curr = curr_image.read(p).xyz();
-        accum_image.write(p, accum + make_float4(curr, 1.f));
+        accum_image.write(p, accum + make_float4(curr, 1.0f));
     };
 
     Kernel2D clear_kernel = [](ImageFloat image) noexcept {
@@ -315,11 +312,11 @@ int main(int argc, char *argv[]) {
         set_name("hdr2ldr_kernel");
         UInt2 coord = dispatch_id().xy();
         Float4 hdr = hdr_image.read(coord);
-        Float3 ldr = linear_to_srgb(clamp(hdr.xyz() / hdr.w * scale, 0.f, 1.f));
+        Float3 ldr = linear_to_srgb(clamp(hdr.xyz() / hdr.w * scale, 0.0f, 1.0f));
         ldr_image.write(coord, make_float4(ldr, 1.0f));
     };
 
-    ShaderOption o{.enable_debug_info = false};
+    ShaderOption o { .enable_debug_info = false };
     auto clear_shader = device.compile(clear_kernel, o);
     auto hdr2ldr_shader = device.compile(hdr2ldr_kernel, o);
     auto accumulate_shader = device.compile(accumulate_kernel, o);
@@ -358,14 +355,12 @@ int main(int argc, char *argv[]) {
     auto last_time { 0.0 };
     auto frame_count { 0u };
     float clear_color[4] = { 0.45f, 0.55f, 0.60f, 1.00f };
-    Image<float> ldr_image = device.create_image<float>(PixelStorage::BYTE4, resolution);
     while (!imgui_window.should_close()) {
         imgui_window.prepare_frame();
         if (imgui_window.framebuffer()) {
             stream << raytracing_shader(framebuffer, seed_image, accel, resolution).dispatch(resolution)
                    << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
-                   << hdr2ldr_shader(accum_image, ldr_image, 2.0f).dispatch(resolution)
-                   << ldr_image.copy_to(imgui_window.framebuffer())
+                   << hdr2ldr_shader(accum_image, imgui_window.framebuffer(), 2.0f).dispatch(resolution)
                    << synchronize();
             auto dt = clock.toc() - last_time;
             LUISA_INFO("dt = {:.2f}ms ({:.2f} spp/s)", dt, spp_per_dispatch / dt * 1000);
