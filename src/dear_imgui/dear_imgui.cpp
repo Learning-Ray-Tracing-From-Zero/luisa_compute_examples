@@ -352,7 +352,6 @@ int main(int argc, char *argv[]) {
     });
 
     Clock clock;
-    auto last_time { 0.0 };
     auto frame_count { 0u };
     float clear_color[4] = { 0.45f, 0.55f, 0.60f, 1.00f };
     while (!imgui_window.should_close()) {
@@ -366,14 +365,11 @@ int main(int argc, char *argv[]) {
         }
 
         {
-            ImGui::Begin("Render Info"); // Create a window called "Hello, world!" and append into it.
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-            auto &io = ImGui::GetIO();
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+            ImGui::Begin("Render Info");
             ImGui::Text("frame counter = %d", frame_count);
-            auto dt = clock.toc() - last_time;
-            last_time = clock.toc();
-            ImGui::Text("dt = %.3f ms (%.3f spp/s)", dt, spp_per_dispatch / dt * 1000.0);
+            auto &io = ImGui::GetIO();
+            ImGui::Text("average %.3f ms/frame (%.3f spp/s)", 1000.0f / io.Framerate, io.Framerate);
+            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
             ImGui::End();
         }
 
