@@ -362,19 +362,18 @@ int main(int argc, char *argv[]) {
                    << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
                    << hdr2ldr_shader(accum_image, imgui_window.framebuffer(), 2.0f).dispatch(resolution)
                    << synchronize();
-            auto dt = clock.toc() - last_time;
-            LUISA_INFO("dt = {:.2f}ms ({:.2f} spp/s)", dt, spp_per_dispatch / dt * 1000);
-            last_time = clock.toc();
             frame_count += spp_per_dispatch;
         }
 
         {
-            ImGui::Begin("Hello, world!"); // Create a window called "Hello, world!" and append into it.
-            ImGui::Text("This is some useful text."); // Display some text (you can use a format strings too)
+            ImGui::Begin("Render Info"); // Create a window called "Hello, world!" and append into it.
             ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-            ImGui::Text("counter = %d", frame_count);
             auto &io = ImGui::GetIO();
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+            ImGui::Text("frame counter = %d", frame_count);
+            auto dt = clock.toc() - last_time;
+            last_time = clock.toc();
+            ImGui::Text("dt = {:.2f}ms ({:.2f} spp/s)", dt, spp_per_dispatch / dt * 1000);
             ImGui::End();
         }
 
