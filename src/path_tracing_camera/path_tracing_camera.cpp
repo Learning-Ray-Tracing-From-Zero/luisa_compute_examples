@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
 
-    // load the cornell box scene
+    // Load the cornell box scene
     tinyobj::ObjReaderConfig obj_reader_config;
     obj_reader_config.triangulate = true;
     obj_reader_config.triangulation_method = "simple";
@@ -62,6 +62,12 @@ int main(int argc, char *argv[]) {
         "Loaded mesh with {} shape(s) and {} vertices.",
         obj_reader.GetShapes().size(), vertices.size()
     );
+
+    // Light
+    constexpr float3 light_position = make_float3(-0.24f, 1.98f, 0.16f);
+    constexpr float3 light_u = make_float3(-0.24f, 1.98f, -0.22f) - light_position;
+    constexpr float3 light_v = make_float3(0.23f, 1.98f, 0.16f) - light_position;
+    constexpr float3 light_emission = make_float3(17.0f, 12.0f, 4.0f);
 
     BindlessArray heap = device.create_bindless_array();
     Stream stream = device.create_stream(StreamTag::GRAPHICS);
@@ -183,25 +189,23 @@ int main(int argc, char *argv[]) {
         set_name("raytracing_kernel");
         set_block_size(16u, 16u, 1u);
         UInt2 coord = dispatch_id().xy();
-        Float frame_size = min(resolution.x, resolution.y).cast<float>();
         UInt state = seed_image.read(coord).x;
         Float rx = lcg(state);
         Float ry = lcg(state);
-        Float2 pixel = (make_float2(coord) + make_float2(rx, ry)) / frame_size * 2.0f - 1.0f;
+        Float2 pixel = {
+            (cast<Float>(coord.x) + rx) / cast<Float>(resolution.x) * 2.0f - 1.0f,
+            (cast<Float>(coord.y) + ry) / cast<Float>(resolution.y) * 2.0f - 1.0f,
+        };
         Float3 radiance = def(make_float3(0.0f));
         $for (i, spp_per_dispatch) {
             Var<Ray> ray = camera->generate_ray(pixel * make_float2(1.0f, -1.0f));
             Float3 beta = def(make_float3(1.0f));
             Float pdf_bsdf = def(0.0f);
-            constexpr float3 light_position = make_float3(-0.24f, 1.98f, 0.16f);
-            constexpr float3 light_u = make_float3(-0.24f, 1.98f, -0.22f) - light_position;
-            constexpr float3 light_v = make_float3(0.23f, 1.98f, 0.16f) - light_position;
-            constexpr float3 light_emission = make_float3(17.0f, 12.0f, 4.0f);
             Float light_area = length(cross(light_u, light_v));
             Float3 light_normal = normalize(cross(light_u, light_v));
             $for (depth, depth_per_tracing) {
                 // trace
-                Var<TriangleHit> hit = accel.intersect(ray, {});
+                Var<SurfaceHit> hit = accel.intersect(ray, {});
                 reorder_shader_execution();
                 $if (hit->miss()) { $break; };
                 Var<Triangle> triangle = heap->buffer<Triangle>(hit.inst).read(hit.prim);
@@ -305,7 +309,7 @@ int main(int argc, char *argv[]) {
     auto raytracing_shader = device.compile(raytracing_kernel, ShaderOption{.name = "path_tracing"});
     auto make_sampler_shader = device.compile(make_sampler_kernel, o);
 
-    static constexpr uint2 resolution = make_uint2(1024u);
+    static constexpr uint2 resolution = make_uint2(1920u, 1080u);
     Image<float> framebuffer = device.create_image<float>(PixelStorage::HALF4, resolution);
     Image<float> accum_image = device.create_image<float>(PixelStorage::FLOAT4, resolution);
     Image<uint> seed_image = device.create_image<uint>(PixelStorage::INT1, resolution);
@@ -319,8 +323,10 @@ int main(int argc, char *argv[]) {
         .front = make_float3(0.0f, 0.0f, -1.0f),
         .up = make_float3(0.0f, 1.0f, 0.0f),
         .right = make_float3(1.0f, 0.0f, 0.0f),
-        .fov = 27.8f
+        .fov = 27.8f,
+        .aspect_ratio = static_cast<float>(resolution.x) / static_cast<float>(resolution.y)
     };
+
     OrbitController camera_controller { camera, 1.0f, 20.0f, 0.5f};
 
     // Imgui
