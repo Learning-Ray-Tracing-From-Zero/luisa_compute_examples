@@ -26,14 +26,15 @@ struct Camera {
     float3 up;
     float3 right;
     float fov; // vertical field of view, degree
-    float aspect_ratio; // resolution.x / resolution.y
+    uint2 resolution;
 };
 
-LUISA_STRUCT(Camera, position, front, up, right, fov, aspect_ratio) {
+LUISA_STRUCT(Camera, position, front, up, right, fov, resolution) {
 
 // p: normalized pixel coordinate
 [[nodiscard]] auto generate_ray(Expr<float2> p) const noexcept {
     auto fov_radians = radians(fov);
+    auto aspect_ratio = static_cast<Float>(resolution.x) / static_cast<Float>(resolution.y);
     // in camera space
     auto wi_local = make_float3(
         p.x * tan(0.5f * fov_radians) * aspect_ratio,

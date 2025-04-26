@@ -324,10 +324,8 @@ int main(int argc, char *argv[]) {
         .up = make_float3(0.0f, 1.0f, 0.0f),
         .right = make_float3(1.0f, 0.0f, 0.0f),
         .fov = 27.8f,
-        .aspect_ratio = static_cast<float>(resolution.x) / static_cast<float>(resolution.y)
+        .resolution = resolution
     };
-
-    OrbitController camera_controller { camera, 1.0f, 20.0f, 0.5f};
 
     // Imgui
     ImGuiWindow imgui_window {
@@ -347,10 +345,10 @@ int main(int argc, char *argv[]) {
         style.TabRounding = 0.0f;
     });
     GLFWwindow* glfw_window = imgui_window.handle();
+    OrbitController camera_controller { camera, glfw_window, 1.0f, 20.0f, 0.5f };
 
     Clock clock;
     auto last_time { 0.0 };
-    auto delta_time { 0.0 };
     auto is_dirty { true };
     auto frame_count { 0 };
     CommandList cmd_list;
@@ -383,84 +381,13 @@ int main(int argc, char *argv[]) {
         ImGui::SliderInt("depth per tracing", &depth_per_tracing, 1, 16);
         ImGui::End();
 
-        delta_time = clock.toc() - last_time;
+        if (camera_controller.is_moved()) {
+            is_dirty = true;
+            frame_count = 0;
+        }
+        camera_controller.set_delta_time(clock.toc() - last_time);
         last_time = clock.toc();
-        auto dt = static_cast<float>(delta_time / 1000.0);
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_W)) != GLFW_RELEASE) {
-            camera_controller.rotate_pitch(dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_S)) != GLFW_RELEASE) {
-            camera_controller.rotate_pitch(-dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_A)) != GLFW_RELEASE) {
-            camera_controller.rotate_yaw(dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_D)) != GLFW_RELEASE) {
-            camera_controller.rotate_yaw(-dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_Q)) != GLFW_RELEASE) {
-            camera_controller.rotate_roll(-dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_E)) != GLFW_RELEASE) {
-            camera_controller.rotate_roll(dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_MINUS)) != GLFW_RELEASE) {
-            camera_controller.zoom(-dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_EQUAL)) != GLFW_RELEASE) {
-            camera_controller.zoom(dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_UP)) != GLFW_RELEASE) {
-            if (
-                glfwGetKey(glfw_window, static_cast<int>(KEY_LEFT_SHIFT)) != GLFW_RELEASE
-                || glfwGetKey(glfw_window, static_cast<int>(KEY_RIGHT_SHIFT)) != GLFW_RELEASE
-            ) {
-                camera_controller.move_forward(dt);
-            } else {
-                camera_controller.move_up(dt);
-            }
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_DOWN)) != GLFW_RELEASE) {
-            if (
-                glfwGetKey(glfw_window, static_cast<int>(KEY_LEFT_SHIFT)) != GLFW_RELEASE
-                || glfwGetKey(glfw_window, static_cast<int>(KEY_RIGHT_SHIFT)) != GLFW_RELEASE
-            ) {
-                camera_controller.move_forward(-dt);
-            } else {
-                camera_controller.move_up(-dt);
-            }
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_LEFT)) != GLFW_RELEASE) {
-            camera_controller.move_right(-dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-        if (glfwGetKey(glfw_window, static_cast<int>(KEY_RIGHT)) != GLFW_RELEASE) {
-            camera_controller.move_right(dt);
-            is_dirty = true;
-            frame_count = 0;
-        }
-
+        camera_controller.handle_key();
         imgui_window.render_frame();
     }
 
