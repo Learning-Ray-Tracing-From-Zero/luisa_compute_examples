@@ -3,6 +3,7 @@
 #include "camera.hpp"
 
 #include <GLFW/glfw3.h>
+#include <glm/vec3.hpp>
 
 #include <cmath>
 #include <unordered_map>
@@ -13,6 +14,7 @@ private:
     Camera& _camera;
     GLFWwindow* _glfw_window;
     bool _is_moved;
+    glm::dvec2 _cursor_pos;
     double _delta_time;
     float _move_speed;
     float _rotate_speed;
@@ -30,6 +32,7 @@ public:
         : _camera { camera }
         , _glfw_window { glfw_window }
         , _is_moved { false }
+        , _cursor_pos { 0.0, 0.0 }
         , _delta_time { 0.0 }
         , _move_speed { move_speed }
         , _rotate_speed { rotate_speed }
@@ -44,6 +47,7 @@ public:
         // Register callback functions
         glfwSetWindowUserPointer(_glfw_window, this);
         glfwSetKeyCallback(_glfw_window, key_callback);
+        glfwSetMouseButtonCallback(_glfw_window, mouse_button_callback);
     }
 
     static void key_callback(
@@ -63,6 +67,24 @@ public:
             _is_moved = true;
         } else if (action == GLFW_RELEASE) {
             key_state[key] = false;
+            _is_moved = false;
+        }
+    }
+
+    static void mouse_button_callback(GLFWwindow* glfw_window, int button, int action, int mods) {
+        auto self = static_cast<OrbitController*>(glfwGetWindowUserPointer(glfw_window));
+        if (self) { self->handle_mouse_button_callback(glfw_window, button, action); }
+    }
+
+    void handle_mouse_button_callback(GLFWwindow* glfw_window, int button, int action) {
+        if (action == GLFW_PRESS) {
+            key_state[button] = true;
+            auto pos_x { 0.0 };
+            auto pos_y { 0.0 };
+            glfwGetCursorPos(glfw_window, pos_x, pos_y);
+            _cursor_pos = { pos_x, pos_y };
+        } else if (action == GLFW_RELEASE) {
+            key_state[button] = false;
             _is_moved = false;
         }
     }
@@ -99,6 +121,33 @@ public:
         }
         if (key_state[GLFW_KEY_LEFT]) { move_right(-dt); }
         if (key_state[GLFW_KEY_RIGHT]) { move_right(dt); }
+    }
+
+    void handle_cursor() {
+        auto pos_x { 0.0 };
+        auto pos_y { 0.0 };
+        glfwGetCursorPos(glfw_window, pos_x, pos_y);
+        auto cursor_pos_delta = glm::vec2(
+             pos_x - _cursor_pos,
+             pos_y - _cursor_pos
+        );
+        _cursor_pos = pos_x;
+        _cursor_pos = pos_y;
+
+        is_moved = (cursor_pos_delta.x || cursor_pos_delta.y) ? true : false;
+        if (!_is_moved) { return ; }
+
+        auto dt = static_cast<float>(_delta_time / 1000.0);
+        if (cursor_pos_delta.x > 0) {
+            rotate_yaw(-dt);
+        } else {
+            rotate_yaw(dt);
+        }
+        if (cursor_pos_delta.y > 0) {
+            rotate_pitch(dt);
+        } else {
+            rotate_pitch(-dt);
+        }
     }
 
     void zoom(float scale) noexcept {

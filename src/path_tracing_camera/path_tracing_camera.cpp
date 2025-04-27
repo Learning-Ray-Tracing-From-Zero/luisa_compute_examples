@@ -388,6 +388,8 @@ int main(int argc, char *argv[]) {
         camera_controller.set_delta_time(clock.toc() - last_time);
         last_time = clock.toc();
         camera_controller.handle_key();
+        camera_controller.handle_cursor();
+
         imgui_window.render_frame();
     }
 
