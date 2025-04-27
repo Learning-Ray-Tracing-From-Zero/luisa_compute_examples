@@ -345,7 +345,7 @@ int main(int argc, char *argv[]) {
         style.TabRounding = 0.0f;
     });
     GLFWwindow* glfw_window = imgui_window.handle();
-    OrbitController camera_controller { camera, glfw_window, 1.0f, 20.0f, 0.5f };
+    FPVCameraController camera_controller { camera, glfw_window, 1.0f, 20.0f, 0.5f };
 
     Clock clock;
     auto last_time { 0.0 };
@@ -388,7 +388,6 @@ int main(int argc, char *argv[]) {
         camera_controller.set_delta_time(clock.toc() - last_time);
         last_time = clock.toc();
         camera_controller.handle_key();
-        camera_controller.handle_cursor();
 
         imgui_window.render_frame();
     }
