@@ -111,8 +111,6 @@ void WindowsWindow::init(const WindowProps &props) {
         _glfw_window,
         [] (GLFWwindow* window, int button, int action, int mods){
             WindowData* data = static_cast<WindowData*>(glfwGetWindowUserPointer(window));
-            WindowCloseEvent window_close_event;
-            data->event_callback(window_close_event);
             switch (action) {
                 case GLFW_PRESS: {
                     MouseButtonPressedEvent event(button);

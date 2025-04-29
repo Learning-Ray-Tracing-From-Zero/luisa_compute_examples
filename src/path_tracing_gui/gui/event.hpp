@@ -50,9 +50,13 @@ enum EventCategory : std::uint8_t {
 
 class Event {
 public:
-    bool handled { false };
+    bool handled;
 
 public:
+    explicit Event()
+        : handled { false }
+    {}
+
     virtual ~Event() = default;
 
     virtual EventType event_type() const = 0;

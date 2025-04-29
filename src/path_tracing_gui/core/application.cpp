@@ -9,6 +9,7 @@
 
 Application::Application()
     : _window(std::unique_ptr<Window>(Window::create()))
+    , _running { true }
 {
     _window->set_event_callback(BIND_EVENT_FN(event));
 }
@@ -22,13 +23,13 @@ void Application::event(Event &event) {
 }
 
 bool Application::window_close(WindowCloseEvent &event) {
-    running = false;
+    _running = false;
     return true;
 }
 
 
 void Application::run() {
-    WindowResizeEvent window_resize_event(1536, 864);
+    WindowResizeEvent window_resize_event(1536u, 864u);
     if (window_resize_event.is_in_category(EventCategoryApplication)) {
         std::cout << window_resize_event.to_string() << std::endl;
     }
@@ -36,9 +37,7 @@ void Application::run() {
         std::cout << "WindowResizeEvent is in EventCategoryInput" << std::endl;
     }
 
-    while (running) {
-        _window->update();
-    }
+    while (_running) { _window->update(); }
 }
 
 

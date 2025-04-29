@@ -28,8 +28,8 @@ public:
 
     void update() override;
 
-    std::uint32_t width() const override {return _window_data.width;}
-    std::uint32_t height() const override {return _window_data.height;}
+    std::uint32_t width() const override { return _window_data.width; }
+    std::uint32_t height() const override { return _window_data.height; }
 
     void set_event_callback(const EventCallback& callback) override {
         _window_data.event_callback = callback;

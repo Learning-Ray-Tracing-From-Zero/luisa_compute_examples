@@ -10,7 +10,7 @@
 class Application {
 private:
     std::unique_ptr<Window> _window;
-    bool running { true };
+    bool _running;
 
 public:
     Application();

@@ -30,16 +30,14 @@ class Window {
 public:
     using EventCallback = std::function<void(Event&)>;
 
+    static Window* create(const WindowProps& props = WindowProps {});
     virtual ~Window() = default;
 
     virtual void update() = 0;
     virtual std::uint32_t width() const = 0;
     virtual std::uint32_t height() const = 0;
 
-    // Window attributes
     virtual void set_event_callback(const EventCallback& callback) = 0;
     virtual void set_vsync(bool enabled) = 0;
     virtual bool is_vsync() const = 0;
-
-    static Window* create(const WindowProps& props = WindowProps {});
 };
