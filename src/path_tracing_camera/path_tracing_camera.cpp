@@ -3,11 +3,9 @@
 #include <cornell_box.h>
 
 #include <GLFW/glfw3.h>
-#include <imgui.h>
-#include <luisa/gui/imgui_window.h>
+#include <luisa/gui/window.h>
 #include <luisa/dsl/sugar.h>
 #include <luisa/luisa-compute.h>
-#include <luisa/gui/input.h>
 #include <luisa/backends/ext/dx_hdr_ext.hpp>
 
 #define TINYOBJLOADER_IMPLEMENTATION
@@ -312,6 +310,7 @@ int main(int argc, char *argv[]) {
     static constexpr uint2 resolution = make_uint2(1920u, 1080u);
     Image<float> framebuffer = device.create_image<float>(PixelStorage::HALF4, resolution);
     Image<float> accum_image = device.create_image<float>(PixelStorage::FLOAT4, resolution);
+    Image<float> ldr_image = device.create_image<float>(PixelStorage::BYTE4, resolution);
     Image<uint> seed_image = device.create_image<uint>(PixelStorage::INT1, resolution);
     stream << clear_shader(accum_image).dispatch(resolution)
            << make_sampler_shader(seed_image).dispatch(resolution)
@@ -327,33 +326,28 @@ int main(int argc, char *argv[]) {
         .resolution = resolution
     };
 
-    // Imgui
-    ImGuiWindow imgui_window {
-        device,
+    // Window
+    Window window { "path_tracing_camera", resolution };
+    Swapchain swap_chain = device.create_swapchain(
         stream,
-        "Display",
-        {
-            .size = resolution,
-            .resizable = true,
-            .vsync = false,
-            .docking = true
+        SwapchainOption {
+            .display = window.native_display(),
+            .window = window.native_handle(),
+            .size = make_uint2(resolution),
+            .wants_hdr = false,
+            .wants_vsync = false,
+            .back_buffer_count = 8
         }
-    };
-    imgui_window.with_context([&] {
-        ImGui::StyleColorsDark();
-        auto &style = ImGui::GetStyle();
-        style.TabRounding = 0.0f;
-    });
-    GLFWwindow* glfw_window = imgui_window.handle();
-    FPVCameraController camera_controller { camera, glfw_window, 1.0f, 20.0f, 0.5f };
+    );
+    GLFWwindow* glfw_window = window.window();
+    FPVCameraController camera_controller { camera, window.window(), 1.0f, 20.0f, 0.5f };
 
     Clock clock;
     auto last_time { 0.0 };
     auto is_dirty { true };
     auto frame_count { 0 };
     CommandList cmd_list;
-    while (!imgui_window.should_close()) {
-        imgui_window.prepare_frame();
+    while (!window.should_close()) {
         if (is_dirty) {
             cmd_list << clear_shader(accum_image).dispatch(resolution);
             is_dirty = false;
@@ -368,18 +362,11 @@ int main(int argc, char *argv[]) {
                     spp_per_dispatch,
                     depth_per_tracing
                 ).dispatch(resolution)
-                << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
-                << hdr2ldr_shader(accum_image, imgui_window.framebuffer(), 2.0f).dispatch(resolution)
-                << synchronize();
-        frame_count += spp_per_dispatch;
-
-        ImGui::Begin("Render Info");
-        ImGui::Text("frame counter = %d", frame_count);
-        auto &io = ImGui::GetIO();
-        ImGui::Text("average %.3f ms/frame (%.3f spp/s)", 1000.0f / io.Framerate, io.Framerate);
-        ImGui::SliderInt("spp per dispatch", &spp_per_dispatch, 1, 64);
-        ImGui::SliderInt("depth per tracing", &depth_per_tracing, 1, 16);
-        ImGui::End();
+               << accumulate_shader(accum_image, framebuffer).dispatch(resolution)
+               << hdr2ldr_shader(accum_image, ldr_image, 2.0f).dispatch(resolution)
+               << swap_chain.present(ldr_image)
+               << synchronize();
+        window.poll_events();
 
         if (camera_controller.is_moved()) {
             is_dirty = true;
@@ -387,12 +374,12 @@ int main(int argc, char *argv[]) {
         }
         camera_controller.set_delta_time(clock.toc() - last_time);
         last_time = clock.toc();
+        double dt = clock.toc() - last_time;
+        LUISA_INFO("dt = {:.2f}ms ({:.2f} spp/s)", dt, spp_per_dispatch / dt * 1000.0f);
+        frame_count += spp_per_dispatch;
+
         camera_controller.handle_key();
-
-        imgui_window.render_frame();
     }
-
-    stream.synchronize();
 
     return 0;
 }
