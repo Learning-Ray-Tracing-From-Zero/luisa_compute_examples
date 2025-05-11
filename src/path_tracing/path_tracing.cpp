@@ -1,4 +1,5 @@
 #include <luisa/dsl/sugar.h>
+#include <luisa/gui/window.h>
 #include <luisa/luisa-compute.h>
 #include <luisa/backends/ext/dx_hdr_ext.hpp>
 
@@ -47,7 +48,7 @@ int main(int argc, char *argv[]) {
         && (std::string(argv[3]) == "progressive_render")
     ) ? false : true;
 
-    // load the cornell box scene
+    // Load the cornell box scene
     tinyobj::ObjReaderConfig obj_reader_config;
     obj_reader_config.triangulate = true;
     obj_reader_config.triangulation_method = "simple";
@@ -81,8 +82,7 @@ int main(int argc, char *argv[]) {
     BindlessArray heap = device.create_bindless_array();
     Stream stream = device.create_stream(StreamTag::GRAPHICS);
     Buffer<float3> vertex_buffer = device.create_buffer<float3>(vertices.size());
-    stream << vertex_buffer.copy_from(vertices.data())
-           << synchronize();
+    stream << vertex_buffer.copy_from(vertices.data()) << synchronize();
     luisa::vector<Mesh> meshes;
     luisa::vector<Buffer<Triangle>> triangle_buffers;
     for (auto &&shape : obj_reader.GetShapes()) {
@@ -107,25 +107,23 @@ int main(int argc, char *argv[]) {
     }
 
     Accel accel = device.create_accel({});
-    for (Mesh &m : meshes) {
-        accel.emplace_back(m, make_float4x4(1.0f));
-    }
+    for (Mesh &m : meshes) { accel.emplace_back(m, make_float4x4(1.0f)); }
     stream << heap.update()
            << accel.build()
            << synchronize();
 
-    Constant materials{
-        make_float3(0.725f, 0.710f, 0.680f),// floor
-        make_float3(0.725f, 0.710f, 0.680f),// ceiling
-        make_float3(0.725f, 0.710f, 0.680f),// back wall
-        make_float3(0.140f, 0.450f, 0.091f),// right wall
-        make_float3(0.630f, 0.065f, 0.050f),// left wall
-        make_float3(0.725f, 0.710f, 0.680f),// short box
-        make_float3(0.725f, 0.710f, 0.680f),// tall box
-        make_float3(0.000f, 0.000f, 0.000f),// light
+    Constant materials {
+        make_float3(0.725f, 0.710f, 0.680f), // floor
+        make_float3(0.725f, 0.710f, 0.680f), // ceiling
+        make_float3(0.725f, 0.710f, 0.680f), // back wall
+        make_float3(0.140f, 0.450f, 0.091f), // right wall
+        make_float3(0.630f, 0.065f, 0.050f), // left wall
+        make_float3(0.725f, 0.710f, 0.680f), // short box
+        make_float3(0.725f, 0.710f, 0.680f), // tall box
+        make_float3(0.000f, 0.000f, 0.000f)  // light
     };
 
-    Callable linear_to_srgb = [&](Var<float3> x) noexcept {
+    Callable linear_to_srgb = [](Var<float3> x) noexcept {
         return saturate(
             select(
                 1.055f * pow(x, 1.0f / 2.4f) - 0.055f,
@@ -288,7 +286,7 @@ int main(int argc, char *argv[]) {
                 Float3 new_direction = onb->to_world(wi_local);
                 ray = make_ray(pp, new_direction);
                 pdf_bsdf = cos_wi * inv_pi;
-                beta *= albedo;// * cos_wi * inv_pi / pdf_bsdf => * 1.f
+                beta *= albedo; // * cos_wi * inv_pi / pdf_bsdf => * 1.f
 
                 // rr
                 Float l = dot(make_float3(0.212671f, 0.715160f, 0.072169f), beta);
@@ -299,7 +297,7 @@ int main(int argc, char *argv[]) {
                 beta *= 1.0f / q;
             };
         };
-        radiance /= static_cast<float>(spp_per_dispatch);
+        radiance /= static_cast<Float>(spp_per_dispatch);
         seed_image.write(coord, make_uint4(state));
         $if (any(dsl::isnan(radiance))) { radiance = make_float3(0.0f); };
         image.write(dispatch_id().xy(), make_float4(clamp(radiance, 0.0f, 30.0f), 1.0f));
@@ -310,7 +308,7 @@ int main(int argc, char *argv[]) {
         UInt2 p = dispatch_id().xy();
         Float4 accum = accum_image.read(p);
         Float3 curr = curr_image.read(p).xyz();
-        accum_image.write(p, accum + make_float4(curr, 1.f));
+        accum_image.write(p, accum + make_float4(curr, 1.0f));
     };
 
     Kernel2D clear_kernel = [](ImageFloat image) noexcept {
@@ -322,11 +320,11 @@ int main(int argc, char *argv[]) {
         set_name("hdr2ldr_kernel");
         UInt2 coord = dispatch_id().xy();
         Float4 hdr = hdr_image.read(coord);
-        Float3 ldr = linear_to_srgb(clamp(hdr.xyz() / hdr.w * scale, 0.f, 1.f));
+        Float3 ldr = linear_to_srgb(clamp(hdr.xyz() / hdr.w * scale, 0.0f, 1.0f));
         ldr_image.write(coord, make_float4(ldr, 1.0f));
     };
 
-    ShaderOption o{.enable_debug_info = false};
+    ShaderOption o { .enable_debug_info = false };
     auto clear_shader = device.compile(clear_kernel, o);
     auto hdr2ldr_shader = device.compile(hdr2ldr_kernel, o);
     auto accumulate_shader = device.compile(accumulate_kernel, o);
