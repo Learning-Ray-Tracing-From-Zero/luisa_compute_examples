@@ -150,15 +150,14 @@ int main(int argc, char *argv[]) {
 
     Callable make_onb = [](const Float3 &normal) noexcept {
         set_name("make_onb");
-        Float3 binormal = normalize(
-            ite(
-                abs(normal.x) > abs(normal.z),
-                make_float3(-normal.y, normal.x, 0.0f),
-                make_float3(0.0f, -normal.z, normal.y)
-            )
+        Float sign = copysign(1.0f, normal.z);
+        Float a = -1.0f / (sign + normal.z);
+        Float b = a * normal.x * normal.y;
+        return def<Onb>(
+            def(make_float3(1.0f + sign * a * normal.x * normal.x, sign * b, -sign * normal.x)),
+            def(make_float3(b, sign + a * normal.y * normal.y, -normal.y)),
+            normal
         );
-        Float3 tangent = normalize(cross(binormal, normal));
-        return def<Onb>(tangent, binormal, normal);
     };
 
     Callable cosine_sample_hemisphere = [](Float2 u) noexcept {
