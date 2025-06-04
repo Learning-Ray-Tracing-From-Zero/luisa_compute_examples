@@ -162,6 +162,8 @@ int main(int argc, char *argv[]) {
 
     Callable make_onb = [](const Float3 &normal) noexcept {
         set_name("make_onb");
+        // Using heuristic methods to select an auxiliary vector that is not collinear with normal,
+        //   and then generating binnormal through cross product
         Float3 binormal = normalize(
             ite(
                 abs(normal.x) > abs(normal.z),

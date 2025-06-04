@@ -7,7 +7,9 @@ using namespace luisa;
 using namespace luisa::compute;
 
 
+// Orthonormal Basis
 struct Onb {
+    // TBN Matrix: [t b n]
     float3 tangent;
     float3 binormal;
     float3 normal;
