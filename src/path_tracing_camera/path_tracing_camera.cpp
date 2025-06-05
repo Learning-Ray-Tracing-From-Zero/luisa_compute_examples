@@ -264,7 +264,13 @@ int main(int argc, char *argv[]) {
                 beta *= albedo; // * cos_wi * inv_pi / pdf_bsdf => * 1.0f
 
                 // rr
+                // Convert the path weight 'beta'(RGB vector) into grayscale brightness values,
+                //   where a higher weight indicates a more significant contribution of the path to the final color
+                // Using grayscale coefficients instead of directly taking the maximum value of 'beta' is more in line with human perception
                 Float l = dot(make_float3(0.212671f, 0.715160f, 0.072169f), beta);
+                // The lower limit of 0.05 is an empirical value
+                // If it is too small, it will cause weight compensation explosion (noise increase),
+                //   and if it is too large, it will reduce the optimization effect
                 $if (l == 0.0f) { $break; };
                 Float q = max(l, 0.05f);
                 Float r = lcg(state);
