@@ -42,6 +42,7 @@ int main(int argc, char *argv[]) {
     log_level_verbose();
     Context context { argv[0] };
     Device device = context.create_device(argv[1]);
+    Stream stream = device.create_stream(StreamTag::GRAPHICS);
     int samples_per_pixel = std::stoi(argv[2]);
     bool is_offline_render = (
         (argc == 4)
@@ -64,6 +65,7 @@ int main(int argc, char *argv[]) {
         LUISA_WARNING_WITH_LOCATION("{}", e);
     }
 
+    // vertex
     auto &&p = obj_reader.GetAttrib().vertices;
     luisa::vector<float3> vertices;
     vertices.reserve(p.size() / 3u);
@@ -78,12 +80,12 @@ int main(int argc, char *argv[]) {
         "Loaded mesh with {} shape(s) and {} vertices.",
         obj_reader.GetShapes().size(), vertices.size()
     );
-
-    BindlessArray heap = device.create_bindless_array();
-    Stream stream = device.create_stream(StreamTag::GRAPHICS);
     Buffer<float3> vertex_buffer = device.create_buffer<float3>(vertices.size());
     stream << vertex_buffer.copy_from(vertices.data()) << synchronize();
+
+    // mesh
     luisa::vector<Mesh> meshes;
+    BindlessArray heap = device.create_bindless_array();
     luisa::vector<Buffer<Triangle>> triangle_buffers;
     for (auto &&shape : obj_reader.GetShapes()) {
         uint index = static_cast<uint>(meshes.size());
@@ -101,16 +103,12 @@ int main(int argc, char *argv[]) {
         );
         Mesh &mesh = meshes.emplace_back(device.create_mesh(vertex_buffer, triangle_buffer));
         heap.emplace_on_update(index, triangle_buffer);
-        stream << triangle_buffer.copy_from(indices.data())
-               << mesh.build()
-               << synchronize();
+        stream << triangle_buffer.copy_from(indices.data()) << mesh.build() << synchronize();
     }
 
     Accel accel = device.create_accel({});
     for (Mesh &m : meshes) { accel.emplace_back(m, make_float4x4(1.0f)); }
-    stream << heap.update()
-           << accel.build()
-           << synchronize();
+    stream << heap.update() << accel.build() << synchronize();
 
     Constant materials {
         make_float3(0.725f, 0.710f, 0.680f), // floor
